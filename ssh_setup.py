@@ -1,12 +1,52 @@
-import pwinput
-import serial
-from serial.tools import list_ports
+import getpass
+import platform
+import warnings
+try:
+    import serial
+    from serial.tools import list_ports
+except ImportError:
+    raise SystemExit(
+        "Missing pyserial. Install requirements.txt with the Python interpreter "
+        "you use to run this script. See README.md."
+    )
 import time
 
 
 # Passordene brukes også til å skjule passord i konsollens svar.
 password = ""
 enable_password = ""
+
+
+def read_password(prompt):
+    """Skjul passord i Windows- og Linux-terminaler uten ekstra pakker."""
+    try:
+        with warnings.catch_warnings():
+            # Ikke fall tilbake til synlig input hvis terminalen ikke støtter dette.
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            return getpass.getpass(prompt)
+    except (getpass.GetPassWarning, EOFError):
+        raise SystemExit(
+            "Hidden password input is unavailable. Run this script in a terminal "
+            "(for example VS Code's integrated terminal), not the Output panel."
+        )
+
+
+def serial_help():
+    """Gi veiledning for operativsystemet Python faktisk kjører i."""
+    if platform.system() == "Windows":
+        return "Check the COM port in Device Manager and close PuTTY or other serial terminals."
+    if platform.system() == "Linux":
+        hint = (
+            "Check the cable, serial driver and permissions for /dev/ttyUSB* or "
+            "/dev/ttyACM*. Close other serial terminals. See README.md."
+        )
+        if "microsoft" in platform.release().lower():
+            hint += (
+                " In WSL 2, attach the USB adapter using usbipd in Windows first; "
+                "Windows COM ports are not automatically available in WSL 2."
+            )
+        return hint
+    return "Check the cable, serial driver, port permissions and other serial terminals."
 
 
 def read_output(timeout=30):
@@ -55,7 +95,7 @@ def required_input(question):
 ports = list(list_ports.comports())
 
 if not ports:
-    raise SystemExit("No serial ports found.")
+    raise SystemExit("No serial ports found. " + serial_help())
 
 print("\nAvailable serial ports:")
 
@@ -90,7 +130,7 @@ print(f"\nSelected: {selected.device}")
 try:
     ser = serial.Serial(selected.device, baudrate=9600, timeout=2, write_timeout=5)
 except serial.SerialException as error:
-    raise SystemExit(f"Could not open serial port: {error}")
+    raise SystemExit(f"Could not open serial port: {error}\n{serial_help()}")
 
 try:
     time.sleep(2)
@@ -143,7 +183,7 @@ try:
     username = required_input("Username: ")
 
     while not password:
-        password = pwinput.pwinput("Password: ")
+        password = read_password("Password: ")
         if not password:
             print("Password cannot be empty.")
 
@@ -166,7 +206,7 @@ try:
     s = read_output()
 
     if "password:" in s.lower():
-        enable_password = pwinput.pwinput("Existing enable password: ")
+        enable_password = read_password("Existing enable password: ")
         ser.write((enable_password + "\r\n").encode())
         s += read_output()
 
