@@ -1,0 +1,170 @@
+---
+# Første kjøring må gjøres i denne rekkefølgen for å få kontakt med alle enhetene.
+- name: Sett opp øverste management-switch
+  hosts: management_switch
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Bruk switchen som en lag 2-switch
+      cisco.ios.ios_config:
+        lines:
+          - no ip routing
+
+    - name: Sett portene til PC og routere i samme VLAN
+      cisco.ios.ios_config:
+        parents: "interface {{ item }}"
+        lines:
+          - switchport mode access
+          - "switchport access vlan {{ top_management_vlan }}"
+          - no shutdown
+      loop: "{{ access_ports }}"
+
+    - name: Lagre konfigurasjonen
+      cisco.ios.ios_config:
+        save_when: modified
+
+- name: Sett opp routere med VLAN, DHCP og ruting
+  hosts: routers
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Kontroller at management og data bruker forskjellige porter
+      ansible.builtin.assert:
+        that:
+          - management_port != data_port
+          - client_vlan in client_vlans
+          - client_vlan != management_vlan
+
+    - name: Les management-porten før dataporten endres
+      cisco.ios.ios_command:
+        commands:
+          - "show running-config interface {{ management_port }}"
+      register: management_config
+      check_mode: false
+
+    - name: Stopp dersom SSH-adressen ligger på feil port
+      ansible.builtin.assert:
+        that:
+          - "('ip address ' ~ ansible_host ~ ' ') in management_config.stdout[0]"
+        fail_msg: Flytt management-IP til management_port via konsollen først. Se README.
+
+    - name: Aktiver dataporten for undergrensesnitt
+      cisco.ios.ios_config:
+        parents: "interface {{ data_port }}"
+        lines:
+          - no ip address
+          - no shutdown
+
+    - name: Lag management-grensesnitt mot de nederste switchene
+      cisco.ios.ios_config:
+        parents: "interface {{ data_port }}.{{ management_vlan }}"
+        lines:
+          - "encapsulation dot1Q {{ management_vlan }} native"
+          - "ip address {{ transit_ip }} {{ management_mask }}"
+
+    - name: Lag gateway for klientenes VLAN
+      cisco.ios.ios_config:
+        parents: "interface {{ data_port }}.{{ client_vlan }}"
+        lines:
+          - "encapsulation dot1Q {{ client_vlan }}"
+          - "ip address {{ client_gateway }} {{ client_mask }}"
+
+    - name: Aktiver DHCP og reserver de første adressene
+      cisco.ios.ios_config:
+        lines:
+          - service dhcp
+          - "ip dhcp excluded-address {{ client_gateway }} {{ dhcp_excluded_end }}"
+
+    - name: Lag DHCP-pool for routerens klient-VLAN
+      cisco.ios.ios_config:
+        parents: "ip dhcp pool {{ inventory_hostname }}_VLAN{{ client_vlan }}"
+        lines:
+          - "network {{ client_network }} {{ client_mask }}"
+          - "default-router {{ client_gateway }}"
+
+    - name: Legg til rute til den andre routerens klientnett
+      cisco.ios.ios_config:
+        lines:
+          - "ip route {{ remote_network }} {{ client_mask }} {{ remote_next_hop }}"
+
+    - name: Lagre konfigurasjonen
+      cisco.ios.ios_config:
+        save_when: modified
+
+- name: Sett opp de to nederste switchene
+  hosts: access_switches
+  gather_facts: false
+  order: inventory
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Vent på SSH-porten etter at uplinken er konfigurert
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        connect_timeout: 3
+        sleep: 5
+        timeout: 180
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_connection: local
+
+    - name: Opprett klient-VLAN og management-VLAN
+      cisco.ios.ios_config:
+        lines:
+          - "vlan {{ item }}"
+      loop: "{{ client_vlans + [management_vlan] }}"
+
+    - name: Sett default gateway for management
+      cisco.ios.ios_config:
+        lines:
+          - "ip default-gateway {{ management_gateway }}"
+
+    - name: Sett uplinker som trunk med management som native VLAN
+      cisco.ios.ios_config:
+        parents: "interface {{ item }}"
+        # Python har klargjort management-uplinken med native VLAN 99.
+        # Her legges klient-VLAN-ene og resten av trunkportene til.
+        lines:
+          - "switchport trunk native vlan {{ management_vlan }}"
+          - "switchport trunk allowed vlan {{ (client_vlans + [management_vlan]) | join(',') }}"
+          - switchport mode trunk
+          - no shutdown
+      loop: "{{ trunk_ports }}"
+
+    - name: Legg klientportene i riktig VLAN
+      cisco.ios.ios_config:
+        parents: "interface {{ item.port }}"
+        lines:
+          - switchport mode access
+          - "switchport access vlan {{ item.vlan }}"
+          - spanning-tree portfast
+          - no shutdown
+      loop: "{{ client_ports }}"
+
+    - name: Opprett EtherChannel mot STUD2
+      cisco.ios.ios_config:
+        parents: "interface Port-channel{{ etherchannel_id }}"
+        # Bare klient-VLAN deles med STUD2, ikke management-nettet vårt.
+        lines:
+          - "switchport trunk native vlan {{ etherchannel_native_vlan }}"
+          - "switchport trunk allowed vlan {{ client_vlans | join(',') }}"
+          - switchport mode trunk
+          - "{{ 'no shutdown' if etherchannel_enabled else 'shutdown' }}"
+      when: etherchannel_ports | length > 0
+
+    - name: Legg de to kablene i samme LACP-gruppe
+      cisco.ios.ios_config:
+        parents: "interface {{ item }}"
+        lines:
+          - "switchport trunk native vlan {{ etherchannel_native_vlan }}"
+          - "switchport trunk allowed vlan {{ client_vlans | join(',') }}"
+          - switchport mode trunk
+          - "channel-group {{ etherchannel_id }} mode active"
+          - "{{ 'no shutdown' if etherchannel_enabled else 'shutdown' }}"
+      loop: "{{ etherchannel_ports }}"
+
+    - name: Lagre konfigurasjonen
+      cisco.ios.ios_config:
+        save_when: modified

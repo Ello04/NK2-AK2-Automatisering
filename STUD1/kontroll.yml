@@ -1,0 +1,60 @@
+---
+# Denne playbooken leser status og endrer ingen konfigurasjon.
+- name: Vis IP-adresser og SSH-status
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Les status
+      cisco.ios.ios_command:
+        commands:
+          - show ip interface brief
+          - show ip ssh
+      register: status
+
+    - name: Vis resultatet
+      ansible.builtin.debug:
+        var: status.stdout_lines
+
+- name: Vis VLAN og trunker
+  hosts: access_switches
+  gather_facts: false
+  tasks:
+    - name: Les switch-status
+      cisco.ios.ios_command:
+        commands:
+          - show vlan brief
+          - show interfaces trunk
+          - show spanning-tree inconsistentports
+      register: status
+
+    - name: Vis resultatet
+      ansible.builtin.debug:
+        var: status.stdout_lines
+
+    - name: Les EtherChannel-status
+      cisco.ios.ios_command:
+        commands:
+          - show etherchannel summary
+      register: channel_status
+      when: etherchannel_ports | length > 0
+
+    - name: Vis EtherChannel-status
+      ansible.builtin.debug:
+        var: channel_status.stdout_lines
+      when: etherchannel_ports | length > 0
+
+- name: Vis DHCP og ruting
+  hosts: routers
+  gather_facts: false
+  tasks:
+    - name: Les router-status
+      cisco.ios.ios_command:
+        commands:
+          - show ip dhcp pool
+          - show ip dhcp binding
+          - show ip route
+      register: status
+
+    - name: Vis resultatet
+      ansible.builtin.debug:
+        var: status.stdout_lines

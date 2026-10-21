@@ -1,0 +1,6 @@
+---
+collections:
+  - name: cisco.ios
+    version: 11.6.0
+  - name: ansible.netcommon
+    version: 8.7.1

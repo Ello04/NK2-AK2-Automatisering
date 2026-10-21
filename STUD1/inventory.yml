@@ -1,0 +1,84 @@
+---
+# IP-plan og porter brukt i STUD1-racket. Endre her ved bruk i et annet rack.
+# Router01 = venstre router, Router02 = høyre router i STUD1.
+# Multilayer01 = øverste switch, SW01 = midterste switch, SW02 = nederste switch.
+all:
+  vars:
+    ansible_connection: ansible.netcommon.network_cli
+    ansible_network_os: cisco.ios.ios
+    ansible_network_cli_ssh_type: paramiko
+    ansible_become: true
+    ansible_become_method: enable
+    ansible_command_timeout: 60
+
+    management_vlan: 99
+    management_mask: 255.255.255.0
+    management_gateway: 172.16.28.1
+    client_mask: 255.255.255.0
+    client_vlans: [10, 20]
+
+    # Aktiver først når oppsettet er avtalt med STUD2.
+    etherchannel_enabled: false
+    etherchannel_id: 1
+    etherchannel_native_vlan: 1
+
+  children:
+    management_switch:
+      hosts:
+        Multilayer01:
+          ansible_host: 172.16.27.12
+          top_management_vlan: 1
+          access_ports:
+            - GigabitEthernet1/0/1
+            - GigabitEthernet1/0/2
+            - GigabitEthernet1/0/3
+
+    routers:
+      vars:
+        management_port: GigabitEthernet0/0/1
+        data_port: GigabitEthernet0/0/0
+      hosts:
+        Router01:
+          ansible_host: 172.16.27.10
+          transit_ip: 172.16.28.1
+          client_vlan: 10
+          client_network: 192.168.10.0
+          client_gateway: 192.168.10.1
+          dhcp_excluded_end: 192.168.10.20
+          remote_network: 192.168.20.0
+          remote_next_hop: 172.16.28.2
+        Router02:
+          ansible_host: 172.16.27.11
+          # Cisco 2901: overstyr portnavnene fra router-gruppen.
+          management_port: GigabitEthernet0/1
+          data_port: GigabitEthernet0/0
+          transit_ip: 172.16.28.2
+          client_vlan: 20
+          client_network: 192.168.20.0
+          client_gateway: 192.168.20.1
+          dhcp_excluded_end: 192.168.20.20
+          remote_network: 192.168.10.0
+          remote_next_hop: 172.16.28.1
+
+    access_switches:
+      # Rekkefølgen er viktig første gang: SW01 åpner forbindelsen til SW02.
+      hosts:
+        SW01:
+          # Porter og kabling bekreftet på SW01 (Catalyst 2960).
+          ansible_host: 172.16.28.11
+          trunk_ports:
+            - FastEthernet0/3
+            - FastEthernet0/4
+            - FastEthernet0/2
+          client_ports: []
+          etherchannel_ports: []
+        SW02:
+          ansible_host: 172.16.28.12
+          trunk_ports:
+            - GigabitEthernet1/0/3
+          client_ports:
+            - {port: GigabitEthernet1/0/1, vlan: 10}
+            - {port: GigabitEthernet1/0/2, vlan: 20}
+          etherchannel_ports:
+            - GigabitEthernet1/0/4
+            - GigabitEthernet1/0/5
