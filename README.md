@@ -1,71 +1,140 @@
-# NK2 – AK2: Automatisering
+# NK2 – Arbeidskrav 2: STUD1
 
-Python-script som setter opp SSH på en Cisco-router eller switch gjennom en konsollkabel. Etter oppsettet kobler du til med SSH over Ethernet.
+Python setter opp SSH via konsollkabel. Ansible setter opp VLAN, DHCP,
+ruting og EtherChannel via Ethernet. Oppsettet bruker R1, R2, SW_MGMT
+(øverst), SW1 (midten) og SW2 (nederst) i STUD1.
 
-## Du trenger
+IP-adressene er et forslag. Endre adresser og porter i `inventory.yml`
+dersom racket ditt er annerledes. Oppsettet er laget for labutstyr med
+grunnkonfigurasjon, ikke for å erstatte en vilkårlig eksisterende konfigurasjon.
 
-- Python3 på Windows eller Linux.
-- En Cisco-router eller switch som støtter SSH.
-- Konsollkabel og Ethernet-kabel.
+## 1. Koble kablene
 
-## 1. Koble til konsollen
+| Fra | Til |
+|---|---|
+| Management-PC | SW_MGMT Gi1/0/3 |
+| Multilayer01 Gi1/0/1 | R01 Gi0/0/1 |
+| Multilayer01 Gi1/0/2 | R02 Gi0/0/1 |
+| R01 Gi0/0/0 | SW01 Fa0/3 |
+| R02 Gi0/0/0 | SW01 Fa0/4 |
+| SW01 Fa0/2 | SW02 Fa0/3 |
+| SW02 Fa0/1 | Klient i VLAN 10 |
+| SW02 Fa0/2 | Klient i VLAN 20 |
+| SW02 Fa0/4 og Fa0/5 | EtherChannel mot STUD2 |
 
-Koble konsollkabelen mellom PC-en og enheten. La enheten starte ferdig, og lukk PuTTY hvis det bruker samme serieport. Scriptet bruker 9600 baud og forventer en CLI-prompt eller initial configuration-dialogen.
+Sett manuell IPv4 på management-PC-ens Ethernet-kort:
 
-Åpne en terminal i prosjektmappen.
+- IP: `172.16.27.100`
+- Nettmaske: `255.255.255.0`
+- Gateway: `172.16.27.10`
 
-## 2. Installer og kjør
+## 2. Sett opp SSH med Python
 
-### Windows – PowerShell
+Installer pakkene og kjør scriptet fra prosjektmappen:
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe ssh_setup.py
+```bash
+python -m pip install -r requirements.txt
+python ssh_setup.py
 ```
 
-### Linux
+På Linux kan kommandoen hete `python3`. Bruk et virtuelt miljø ved behov.
+Brukeren må ha tilgang til serieporten på Linux. Lukk PuTTY-konsollen
+før scriptet kjører, slik at serieporten er ledig.
+
+Koble konsollkabelen til én enhet om gangen. Velg riktig serieport og
+bruk verdiene under. Bruk samme SSH-brukernavn og passord på alle fem.
+Nettmasken er `255.255.255.0` på alle enhetene.
+
+| Hostname | Type | Management-IP | Port i Python | VLAN | Gateway |
+|---|---|---|---|---|---|
+| SW_MGMT | switch | 172.16.27.12 | GigabitEthernet1/0/3 | 1 | Tomt |
+| R1 | router | 172.16.27.10 | GigabitEthernet0/0/1 | – | – |
+| R2 | router | 172.16.27.11 | GigabitEthernet0/0/1 | – | – |
+| SW1 | switch | 172.16.28.11 | FastEthernet0/3 | 99 | 172.16.28.1 |
+| SW2 | switch | 172.16.28.12 | FastEthernet0/3 | 99 | 172.16.28.1 |
+
+For SW1 og SW2 velger du uplinken Fa0/3 når scriptet spør etter
+«Switch port connected to PC». Ansible gjør denne om til trunk senere.
+Disse to switchene blir tilgjengelige fra management-PC-en under Ansible-kjøringen.
+
+Routerens management-IP må ligge på **Gi0/0/1**. Hvis du tidligere satte
+den på Gi0/0/0, fjern IP-en der via konsollen før du kjører Python på nytt:
+
+```text
+enable
+configure terminal
+interface GigabitEthernet0/0/0
+no ip address
+end
+```
+
+## 3. Kjør Ansible fra Linux eller WSL
+
+Ansible kjøres fra management-PC-en. Ved WSL: legg prosjektmappen i
+Linux-hjemmemappen. Kontroller at Linux/WSL kan nå `172.16.27.10`.
+
+Fra prosjektmappen:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python ssh_setup.py
+source .venv/bin/activate
+python -m pip install -r requirements-ansible.txt
+ansible-galaxy collection install -r collections.yml
+ansible-playbook -i inventory.yml oppsett.yml -u cisco --ask-pass
 ```
 
-Velg serieporten og `router` eller `switch`. Fyll inn hostname, brukernavn, passord, management-IP og riktig Ethernet-port. Standardverdier velges med Enter.
+Bytt `cisco` med brukernavnet du valgte. Skriv SSH-passordet når du blir spurt.
+Python oppretter brukeren med privilege 15. Hvis utstyret likevel krever
+et eget enable-passord, legg til `--ask-become-pass`.
 
-Portene finnes automatisk: for eksempel `COM1` på Windows og `/dev/ttyUSB0` på Linux. På Linux må brukeren ha tilgang til serieporten.
+Kjør hele `oppsett.yml` første gang. Den konfigurerer SW_MGMT, routerne,
+SW1 og SW2 i riktig rekkefølge og lagrer konfigurasjonen.
 
-## 3. Koble til med SSH
-
-Koble Ethernet-kabelen fra PC-en til porten du valgte i scriptet. Sett manuell IPv4 på PC-ens Ethernet-kort i samme subnett som enheten.
-
-Eksempel:
-
-| Innstilling | Enhet | PC |
+| VLAN | Nettverk | Gateway / DHCP-server |
 |---|---|---|
-| IP-adresse | `172.16.27.10` | `172.16.27.100` |
-| Nettverksmaske | `255.255.255.0` | `255.255.255.0` |
+| 10 | 192.168.10.0/24 | R1: 192.168.10.1 |
+| 20 | 192.168.20.0/24 | R2: 192.168.20.1 |
+| 99 | 172.16.28.0/24 | Management av SW1 og SW2 |
 
-Gateway og DNS kan stå tomt ved direkte tilkobling i denne laben.
+R1 og R2 deler DHCP-ansvaret: én router per klient-VLAN. Adressene
+`.1` til `.20` er reservert. Statiske ruter gir forbindelse mellom klientnettene.
+Dette oppsettet konfigurerer ikke internettilgang eller DNS.
 
-Kjør i PowerShell eller Linux-terminalen:
+EtherChannel mot STUD2 er avslått som standard. Avtal felles VLAN-, IP-,
+DHCP- og LACP-oppsett med STUD2 før dere kobler sammen nettene. Begge
+sider må tillate VLAN 10 og 20 og bruke samme native VLAN (her 1).
+Unngå overlappende DHCP-pooler og like gateway-adresser.
+Sett deretter `etherchannel_enabled: true` i `inventory.yml` og kjør igjen.
+Jobber du alene, lar du den stå `false`.
+
+## 4. Kontroller
+
+```bash
+ansible-playbook -i inventory.yml kontroll.yml -u cisco --ask-pass
+```
+
+Sett klientene til automatisk IPv4 (DHCP). Kontroller at de får adresse
+i riktig VLAN, og test ping til gateway og en klient i det andre VLAN-et.
+Kontroll-playbooken viser status; den utfører ikke disse ping-testene.
+
+For vanlig CLI-tilgang fra management-PC-en:
 
 ```bash
 ssh cisco@172.16.27.10
 ```
 
-Bruk brukernavnet, management-IP-en og passordet du oppga i scriptet.
+Alternativt: PuTTY → SSH → IP-adresse → port 22.
 
-I PuTTY velger du **SSH**, enhetens management-IP og port **22**.
+Pakken er kontrollert for Python-/YAML-syntaks, variabler og IP-plan.
+Konsollleseren er testet med simulerte svar. Full Ansible-syntakskontroll
+var blokkert fordi Cisco-collectionen ikke kunne lastes ned i testmiljøet.
+Oppsettet er ikke testet på fysisk utstyr.
 
-## Hvis det ikke fungerer
+## GitHub
 
-Kontroller gjennom konsollen:
+Opprett et offentlig repository og last opp filene i denne mappen,
+inkludert `.gitignore`. Ikke last opp `.venv` eller passord.
+Tilpass README til portene, adressene og testresultatene du faktisk bruker.
 
-```text
-show ip interface brief
-show ip ssh
-```
-
-Management-grensesnittet må vise `up/up`, og SSH skal vise `SSH Enabled - version 2.0`. Sjekk kabel, riktig port og PC-ens IP-adresse hvis SSH gir timeout.
+Dokumentasjon: [pySerial](https://pyserial.readthedocs.io/),
+[Cisco IOS collection](https://docs.ansible.com/projects/ansible/latest/collections/cisco/ios/).
