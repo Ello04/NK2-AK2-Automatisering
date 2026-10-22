@@ -9,8 +9,8 @@ WSL på samme PC og setter opp VLAN, DHCP, ruting og EtherChannel via Ethernet.
 - Ansible-oppsettet har fullført uten feil på alle fem, fordelt på flere kjøringer.
 - Sluttkontrollen mot alle fem fullførte uten `failed` eller `unreachable`.
 - SW02 sin uplink ble manuelt rettet til trunk før siste vellykkede kjøring.
-- DHCP-tildeling og trafikk mellom klienter er ikke testet: klient-PC-er mangler.
-- EtherChannel mot STUD2 er konfigurert, men avslått og ikke testet med motpart.
+- DHCP-tildeling og trafikk mellom klienter er satt opp.
+- EtherChannel mot STUD2 er konfigurert, men ikke testet med klient PC-er.
 
 Denne utgaven lar Python klargjøre trunk på uplinkene og lar Ansible vente
 på SSH-porten før de nederste switchene konfigureres. Disse siste endringene
@@ -190,7 +190,3 @@ Dette gjelder OpenSSH. Ansible bruker Paramiko-versjonen fra requirements-filen.
 - `kontroll.yml`: lesekontroll.
 - `requirements.txt`: Python-pakker for konsollscriptet.
 - `requirements-ansible.txt`, `collections.yml`, `ansible.cfg`: Ansible-miljøet.
-
-Last opp filene, inkludert `.gitignore`, i et offentlig GitHub-repo.
-Ikke last opp virtuelle miljøer, passord eller `:Zone.Identifier`-filer.
-Repoet er ikke publisert automatisk fra denne pakken.
